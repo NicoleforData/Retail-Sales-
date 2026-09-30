@@ -1,0 +1,157 @@
+What is the total revenue, units sold and total number of transactions?
+SELECT 
+    SUM("Total Amount") AS total_revenue,
+    SUM("Quantity") AS total_units_sold,
+    COUNT("Transaction ID") AS total_transactions
+FROM Retailsales;
+
+
+What are the popular products by category?
+SELECT 
+    "Product Category",
+    SUM("Total Amount") AS total_revenue,
+    SUM("Quantity") AS total_units_sold,
+    ROUND(AVG("Total Amount"), 2) AS avg_transaction_value
+FROM Retailsales
+GROUP BY "Product Category"
+ORDER BY total_revenue DESC;
+
+
+Revenue and average spending by age group. 
+SELECT 
+    CASE 
+        WHEN "Age" < 25 THEN 'Under 25'
+        WHEN "Age" BETWEEN 25 AND 40 THEN '25-40'
+        WHEN "Age" BETWEEN 41 AND 55 THEN '41-55'
+        ELSE '56+'
+    END AS age_group,
+    COUNT(*) AS total_transactions,
+    SUM("Total Amount") AS total_revenue,
+    ROUND(AVG("Total Amount"), 2) AS avg_spend_per_trans
+FROM Retailsales
+GROUP BY age_group
+ORDER BY total_revenue DESC;
+
+
+What is the average spending by day of the week?
+SELECT 
+    CASE strftime('%w', "Date")
+        WHEN '0' THEN 'Sunday'
+        WHEN '1' THEN 'Monday'
+        WHEN '2' THEN 'Tuesday'
+        WHEN '3' THEN 'Wednesday'
+        WHEN '4' THEN 'Thursday'
+        WHEN '5' THEN 'Friday'
+        WHEN '6' THEN 'Saturday'
+    END AS day_of_week,
+    COUNT("Transaction ID") AS total_transactions,
+    ROUND(AVG("Total Amount"), 2) AS avg_spend
+FROM Retailsales
+GROUP BY strftime('%w', "Date")
+ORDER BY avg_spend DESC;
+
+
+What is the average monthly revenue?
+SELECT 
+    strftime('%Y-%m', "Date") AS sales_month,
+    SUM("Total Amount") AS monthly_revenue,
+    SUM("Quantity") AS monthly_units_sold,
+    COUNT("Transaction ID") AS transaction_count
+FROM Retailsales
+GROUP BY sales_month
+ORDER BY sales_month ASC;
+
+Average revenue share by category. 
+SELECT 
+    "Product Category",
+    SUM("Total Amount") AS category_revenue,
+    ROUND(
+        (SUM("Total Amount") * 100.0) / (SELECT SUM("Total Amount") FROM Retailsales), 
+        2
+    ) AS pct_of_total_revenue
+FROM Retailsales
+GROUP BY "Product Category"
+ORDER BY category_revenue DESC;
+
+
+Find top performing category per age group.
+WITH age_groups AS (
+    SELECT 
+        "Transaction ID",
+        "Product Category",
+        "Total Amount",
+        CASE 
+            WHEN "Age" < 25 THEN 'Under 25'
+            WHEN "Age" BETWEEN 25 AND 40 THEN '25-40'
+            WHEN "Age" BETWEEN 41 AND 55 THEN '41-55'
+            ELSE '56+'
+        END AS age_group
+    FROM Retailsales
+),
+category_totals AS (
+    SELECT 
+        age_group,
+        "Product Category",
+        SUM("Total Amount") AS total_revenue,
+        RANK() OVER (
+            PARTITION BY age_group 
+            ORDER BY SUM("Total Amount") DESC
+        ) AS category_rank
+    FROM age_groups
+    GROUP BY age_group, "Product Category"
+)
+SELECT 
+    age_group,
+    "Product Category" AS top_category,
+    total_revenue
+FROM category_totals
+WHERE category_rank = 1;
+
+
+What is the distribution of transaction volume across different purchase quantities (1, 2, vs 3 units) for each product category, and how does single-item purchasing impact average basket value?
+SELECT 
+    "Product Category",
+    "Quantity" AS units_in_order,
+    COUNT("Transaction ID") AS transaction_count,
+    SUM("Total Amount") AS total_revenue,
+    ROUND(AVG("Total Amount"), 2) AS avg_transaction_value,
+    ROUND(
+        (COUNT("Transaction ID") * 100.0) / SUM(COUNT("Transaction ID")) OVER(PARTITION BY "Product Category"), 
+        2
+    ) AS pct_of_category_orders
+FROM Retailsales
+GROUP BY "Product Category", "Quantity"
+ORDER BY "Product Category", "Quantity" ASC;
+
+
+How can we segment our customer base into High, Medium, and Low spend tiers based on their total spending, and what percentage of total revenue does each tier represent?
+WITH customer_spending AS (
+    SELECT 
+        "Customer ID",
+        SUM("Total Amount") AS total_customer_spend,
+        COUNT("Transaction ID") AS total_orders
+    FROM Retailsales
+    GROUP BY "Customer ID"
+),
+spending_tiers AS (
+    SELECT 
+        "Customer ID",
+        total_customer_spend,
+        CASE 
+            WHEN total_customer_spend >= 1000 THEN 'High Value ($1000+)'
+            WHEN total_customer_spend BETWEEN 500 AND 999 THEN 'Medium Value ($500-$999)'
+            ELSE 'Low Value (<$500)'
+        END AS spend_tier
+    FROM customer_spending
+)
+SELECT 
+    spend_tier,
+    COUNT("Customer ID") AS total_customers,
+    SUM(total_customer_spend) AS tier_revenue,
+    ROUND(
+        (SUM(total_customer_spend) * 100.0) / (SELECT SUM("Total Amount") FROM Retailsales), 
+        2
+    ) AS pct_of_total_revenue
+FROM spending_tiers
+GROUP BY spend_tier
+ORDER BY tier_revenue DESC;
